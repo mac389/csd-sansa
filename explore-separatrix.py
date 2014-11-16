@@ -1,9 +1,14 @@
 #import brian_no_units
 from brian import *
+from scipy.optimize import fsolve
 import time
 
 from brian.library.IF import *
 from brian.library.synapses import *
+
+from sys import argv
+
+
 
 N=1000
 
@@ -15,9 +20,13 @@ weight =  4.86 * mV
 
 tau = 20 * ms
 sigma = 5 * mV
-g_gap = (1. / N)
+frac = float(argv[1])/100
+g_gap = frac*(1. / N)
 beta = 60 * mV * 2 * ms
 delta = Vt - Vr
+
+def findIntersection(fun1,fun2,x0):
+ return fsolve(lambda x : fun1(x) - fun2(x),x0)
 
 def myreset(P, spikes):
     P.V[spikes] = Vr # reset
@@ -40,6 +49,9 @@ def minimal_example():
         du/dt = (N*Vr-u)/tau : volt # input from other neurons
         ''')
 
+    # In this model, gap junctions between neurons are one giant voltage sync
+    # Similarly, gap junctions between astrocytes are one giant excitatory current sync
+    # both use same formalism
     # Neuron groups
     P = NeuronGroup(N=10000, model=equations,
                   threshold=Vt, reset=Vr)
@@ -192,7 +204,7 @@ def estimate_params(mon, time_est):
 def single_sfc():
     net = DefaultNetwork(default_params)
     net.run()
-    net.plot()
+    #net.plot()
 
 def state_space(grid, neuron_multiply, verbose=True):
     amin = 0
@@ -214,6 +226,7 @@ def state_space(grid, neuron_multiply, verbose=True):
         print "Completed:"
     start_time = time.time()
     figure()
+    param_list = []
     for ai in range(grid + 1):
         for sigmai in range(grid + 1):
             a = int(amin + (ai * (amax - amin)) / grid)
@@ -225,7 +238,11 @@ def state_space(grid, neuron_multiply, verbose=True):
             (newa, newsigma) = estimate_params(net.mon[-1], params.initial_burst_t)
             newa = float(newa) / float(neuron_multiply)
             col = (float(ai) / float(grid), float(sigmai) / float(grid), 0.5)
+            yslope = newa-a
+            xslope = np.diff([newsigma/ms,sigma/ms])[0]
+            param_list.append(tuple((a,sigma,yslope,xslope)))
             plot([sigma / ms, newsigma / ms], [a, newa], color=col)
+            #print [sigma / ms, newsigma / ms], [a, newa]
             plot([sigma / ms], [a], marker='.', color=col, markersize=15)
             i += 1
             if verbose:
@@ -238,14 +255,59 @@ def state_space(grid, neuron_multiply, verbose=True):
     ylabel('a')
     title('Synfire chain state space')
     axis([sigmamin / ms, sigmamax / ms, amin, amax])
-
+    #colorbar()
+    return param_list
 
 #minimal_example()
 print 'Computing SFC with multiple layers'
 single_sfc()
 #print 'Plotting SFC state space'
 #state_space(3,1)
-#state_space(8,10)
-#state_space(10,50)
-#state_space(10,150)
-savefig('gaps_junctions.png',dpi=300)
+params = state_space(20,10)
+
+#separatrix = [(a,sigma) for a,sigma,yslope,xslope in params if 
+ #       float(yslope)/xslope]
+
+a,sigma,yslope,xslope = zip(*params)
+with open('record-astrocytes','a') as f:
+            
+    try:
+        #a-nullcline
+        a_nullcline_idx = (np.diff(np.sign(np.array(yslope))) != 0)*1
+        a_nullcline_coords_x = 1000*np.array(sigma)[a_nullcline_idx==1]
+        a_nullcline_coords_y = np.array(a)[a_nullcline_idx==1]
+
+        a_nullcline_coords = zip(a_nullcline_coords_x,a_nullcline_coords_y)
+        a_nullcline_coords = [(x,y) for x,y in a_nullcline_coords if (x>0)*(x<3.0) and (y>0)*(y<100)]
+
+        a_nullcline_coords_x,a_nullcline_coords_y = zip(*a_nullcline_coords)
+
+        #s-nullcline
+        s_nullcline_idx = (np.diff(np.sign(np.array(xslope))) != 0)*1
+        s_nullcline_coords_x = 1000*np.array(sigma)[s_nullcline_idx==1]
+        s_nullcline_coords_y = np.array(a)[s_nullcline_idx==1]
+
+        s_nullcline_coords = zip(s_nullcline_coords_x,s_nullcline_coords_y)
+        s_nullcline_coords = [(x,y) for x,y in s_nullcline_coords if (x>0)*(x<3.0) and (y>0)*(y<100)]
+
+        s_nullcline_coords_x,s_nullcline_coords_y = zip(*s_nullcline_coords)
+
+
+        #idx = (np.diff(np.sign(np.array(yslope)/np.array(xslope))) !=0)*1
+        #print idx
+        #print = (np.diff(np.sign(xslope)) != 0)*1
+        hold(True)
+        plot(a_nullcline_coords_x,a_nullcline_coords_y,'k--',linewidth=2)
+        plot(s_nullcline_coords_x,s_nullcline_coords_y,'k-.',linewidth=2)
+        #savefig('separatrix-%d.png'%(frac*10),dpi=300)
+
+
+        #calculate point of intersection of nullclines
+        s_fxn = np.poly1d(np.polyfit(s_nullcline_coords_x,s_nullcline_coords_y,2))
+        a_fxn = np.poly1d(np.polyfit(a_nullcline_coords_x,a_nullcline_coords_y,2))
+
+
+        intersection=findIntersection(s_fxn,a_fxn,0.2)
+        print>>f, intersection[0], a_fxn(intersection)[0], frac
+    except:
+        print>>f, '0', '0', frac
