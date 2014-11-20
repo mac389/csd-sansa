@@ -7,6 +7,9 @@ import Graphics as artist
 import numpy as np
 from scipy.linalg import block_diag
 
+from matplotlib import rcParams
+rcParams['text.usetex'] = True
+
 Eex=0*mV
 Ein=-80*mV
 Vrest=-60*mV
@@ -15,6 +18,10 @@ tauex=5*ms
 tauin=10*ms
 Vth=-40*mV
 Ib=0.04*nA
+
+
+gj_weights = {'low':0.02,'medium':0.1,'high':0.2}
+AN_j_weights = gj_weights.items() #deep copy 
 
 def pairwise(iterable):
     "s -> (s0,s1), (s1,s2), (s2, s3), ..."
@@ -78,7 +85,7 @@ Ci.connect(inhibitory_from,inhibitory_to) #Reflecting twice as many inhibitory a
 
 #Synfire chain
 chain_idx = reshape(arange(total_neurons),(-1,n_chains))
-synfire_connection = Synapses(N,N,pre='gex+=we')
+synfire_connection = Synapses(N,N,pre='gex+=(1.1*we)')
 for previous,next in pairwise(chain_idx):
 	for neuron in previous:
 		synfire_connection.connect(neuron,next)
@@ -89,7 +96,7 @@ gap_junctions = Synapses(N, N, '''
              Igap_post = w * (V_pre - V_post) : volt (summed)
              ''')
 gap_junctions.connect(True)
-gap_junctions.w = .1
+gap_junctions.w = .02
 
 #Astrocyte connections
 
@@ -99,7 +106,7 @@ AN_junctions = Synapses(A,N,'''
 	''')
 
 AN_junctions.connect(True)
-AN_junctions.w = 0.01*(1/float(total_neurons)) #Gain simulates buffering?
+AN_junctions.w = 0.1*(1/float(total_neurons)) #Gain simulates buffering?
 
 NA_junctions = Synapses(N,A,'''
 	w : 1 #gap junction conductance
@@ -109,7 +116,7 @@ NA_junctions.connect(True)
 NA_junctions. w = 0.02
 
 #Monitors
-#M = StateMonitor(N,('V','Iastro'),record=True)
+M = StateMonitor(N,('V','Iastro'),record=True)
 R = SpikeMonitor(N)
 
 N.V = Vrest
@@ -128,7 +135,7 @@ run(duration/8)
 
 #--Interval
 #Stimulate, gap junctions unblocked
-#N.V[chain_idx[0,:]] = -20*mV
+N.V[chain_idx[0,:]] = -20*mV
 gap_junctions.w = 0.02
 run(duration/8)
 
@@ -181,11 +188,24 @@ artist.adjust_spines(connection_panel)
 '''
 labels = ['','','Neuron','','Astrocyte','','Both','']
 for i,label in enumerate(labels):
-	print label
-	print (0.1+float(i)/len(labels)*duration/ms,.2)
-	ax.annotate(label,xy=(0.1+float(i)/len(labels)*duration/ms,.2),xycoords='axes fraction', 
-		annotation_clip=False)
+	ax.annotate(r'\textsc{\textbf{%s}}'%label,xy=(float(i)/len(labels),.05),xycoords='axes fraction', 
+		clip_on=False)
 artist.adjust_spines(ax)
 tight_layout()
+'''
+raster = np.zeros((total_neurons,duration/ms))
+for neuron,timestamp in zip(R.i,R.t/ms):
+	raster[neuron,timestamp] = 1
+raster = np.flipud(raster)
+overlap = raster.T.dot(raster[:,int(duration/8/ms):int(2*duration/8/ms)])
+overlap /= (duration/8/ms) #i.e.length of window
+figure()
+plot(overlap,'k.-')
+ax = plt.gca()
+artist.adjust_spines(ax)
+ax.set_ylabel(r'\textbf{\textsc{Overlap}}')
+ax.set_xlabel(r'\textbf{\textsc{Time (ms)}}')
+tight_layout()
+'''
 print time()-start,' duration'
 show()
